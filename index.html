@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>*{box-sizing:border-box}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Aravind</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap">
+<style>
+/* Layout: a full-page ASCII pond on a canvas; a quiet text column floats top-left and the lily pads keep clear of it */
+:root {
+  --bg: #f3f4ee;
+  --fg: #1d271c;
+  --muted: #6a7863;
+  --line: #d9ddcf;
+  --accent: #3d7a2e;
+  --mono: "DM Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #0f1512; --fg: #dbe5d7; --muted: #82947f; --line: #213029; --accent: #9fd85c; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #0f1512; --fg: #dbe5d7; --muted: #82947f; --line: #213029; --accent: #9fd85c; color-scheme: dark; }
+
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--mono); font-size: 14px; line-height: 1.6; }
+
+.page { position: relative; min-height: 100%; overflow: hidden; display: flex; flex-direction: column; }
+#pond { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.content {
+  position: relative; z-index: 1; box-sizing: border-box; width: 100%;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 0;
+}
+.intro { max-width: 30rem; display: grid; gap: 26px; margin-left: clamp(0px, 6vw, 96px); }
+nav { display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; }
+nav a { color: var(--muted); text-decoration: none; }
+nav a[aria-current="page"] { color: var(--fg); }
+nav a[aria-current="page"]::before { content: "> "; color: var(--accent); }
+nav a:hover { color: var(--fg); }
+a:focus-visible { outline: 1px dashed var(--accent); outline-offset: 3px; }
+
+blockquote {
+  margin: 0; font-family: var(--serif); font-style: italic; font-size: 1.25rem; line-height: 1.35;
+  color: var(--muted); border-left: 1px solid var(--line); padding-left: 14px;
+}
+h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 3.1rem); line-height: 1.05; margin: 0 0 14px; text-wrap: balance; }
+.bio p { margin: 0 0 10px; max-width: 60ch; }
+.bio a { color: var(--fg); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+.links { color: var(--muted); }
+.soon { color: var(--muted); }
+
+.room { flex: 1; min-height: 46vh; }
+@media (max-width: 700px) { .room { min-height: 64vh; } }
+
+.status {
+  position: relative; z-index: 1; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 10px 16px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+</style>
+</head>
+<body>
+
+<div class="page" id="page">
+  <canvas id="pond" aria-hidden="true"></canvas>
+
+  <div class="content">
+    <div class="intro" data-avoid>
+      <nav aria-label="Main">
+        <a href="#" data-view="pond" aria-current="page">pond</a>
+        <a href="#projects" data-view="projects">projects</a>
+        <a href="#blog" data-view="blog">blog</a>
+      </nav>
+      <section class="bio view" data-view="pond">
+        <h1>Hi, I'm Aravind.</h1>
+        <p>Software engineer in training, building small things that feel alive.</p>
+        <p>Currently studying data science.</p>
+        <p class="links"><a href="#">github</a> / <a href="#">linkedin</a> / <a href="#">x</a></p>
+      </section>
+      <section class="bio view" data-view="projects" hidden>
+        <h1>Projects</h1>
+        <p class="soon">Coming soon...</p>
+      </section>
+      <section class="bio view" data-view="blog" hidden>
+        <h1>Blog</h1>
+        <p class="soon">Coming soon...</p>
+      </section>
+    </div>
+  </div>
+
+  <div class="room"></div>
+
+  <div class="status">
+    <span>click the water to toss a fly</span>
+    <span id="stats">frogs 0 · hops 0 · flies 0</span>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ── helpers ─────────────────────────────────────────────────────────
+  const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+  const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const lerp = (a, b, k) => a + (b - a) * k;
+  function hash3(a, b, c) {
+    let h = Math.imul(a | 0, 374761393) ^ Math.imul(b | 0, 668265263) ^ Math.imul(c | 0, 1442695041);
+    h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  }
+  function vnoise(x, y, seed) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const u = smooth(0, 1, x - xi), v = smooth(0, 1, y - yi);
+    const a = hash3(xi, yi, seed), b = hash3(xi + 1, yi, seed), c = hash3(xi, yi + 1, seed), d = hash3(xi + 1, yi + 1, seed);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  }
+  const mix = (a, b, k) => [(a[0] + (b[0] - a[0]) * k) | 0, (a[1] + (b[1] - a[1]) * k) | 0, (a[2] + (b[2] - a[2]) * k) | 0];
+  const shade = (c, k) => [Math.min(255, c[0] * k) | 0, Math.min(255, c[1] * k) | 0, Math.min(255, c[2] * k) | 0];
+  function ramp(stops, t) {
+    const x = clamp(t, 0, 1) * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(x));
+    return mix(stops[i], stops[i + 1], x - i);
+  }
+  const pack = c => (c[0] << 16) | (c[1] << 8) | c[2];
+  const angDiff = (a, b) => { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; };
+  // A line glyph that follows a direction on screen, for veins, ripples, tongues.
+  function lineGlyph(dx, dy) {
+    const d = Math.hypot(dx, dy) || 1;
+    if (Math.abs(dy) < 0.38 * d) return "-";
+    if (Math.abs(dx) < 0.38 * d) return "|";
+    return dx * dy > 0 ? "\\" : "/";
+  }
+  let SEG_T = 0;
+  function segDist(px, py, ax, ay, bx, by) {
+    const sx = bx - ax, sy = by - ay, l2 = sx * sx + sy * sy || 1;
+    const t = clamp(((px - ax) * sx + (py - ay) * sy) / l2, 0, 1);
+    SEG_T = t;
+    return Math.hypot(px - ax - sx * t, py - ay - sy * t);
+  }
+
+  // ── palettes ────────────────────────────────────────────────────────
+  const SPECIES = {
+    leopard: { skin: [[36, 64, 30], [60, 98, 40], [90, 134, 54], [126, 166, 72], [168, 198, 108]], mark: [[18, 30, 18], [36, 54, 30], [62, 86, 44]] },
+    tree:    { skin: [[52, 100, 22], [86, 144, 30], [124, 184, 44], [164, 214, 78], [206, 236, 136]], mark: [[226, 214, 160], [240, 232, 190], [250, 246, 220]] },
+    golden:  { skin: [[146, 86, 12], [192, 126, 22], [226, 164, 38], [244, 198, 76], [252, 228, 146]], mark: [[24, 18, 14], [44, 34, 24], [70, 54, 36]] },
+  };
+  const LIGHT = {
+    bg: [243, 244, 238], ink: 0.45, alpha: 0.92, padAlpha: 0.55, water: [36, 50, 44], shadow: [40, 52, 46], shadowAlpha: 0.24,
+    pad: [[38, 82, 38], [58, 110, 46], [88, 140, 58], [124, 168, 78], [168, 200, 116]],
+    bronze: [[110, 52, 40], [146, 76, 52], [176, 108, 70], [204, 146, 102], [226, 186, 146]],
+    eye: [22, 20, 16], iris: [204, 152, 36], tongue: [212, 86, 116], fly: [28, 28, 32],
+    petal: [[176, 52, 96], [212, 96, 138], [238, 156, 186], [250, 214, 228]], stamen: [232, 178, 40], duck: [92, 138, 58], text: [54, 66, 58], tileWash: 0.12,
+  };
+  const DARK = {
+    bg: [15, 21, 18], ink: 0.42, alpha: 0.86, padAlpha: 0.5, water: [226, 238, 230], shadow: [0, 0, 0], shadowAlpha: 0.55,
+    pad: [[30, 66, 32], [46, 92, 40], [70, 122, 50], [104, 152, 66], [146, 186, 98]],
+    bronze: [[96, 44, 34], [130, 66, 46], [160, 96, 62], [190, 134, 92], [214, 176, 136]],
+    eye: [12, 12, 10], iris: [226, 176, 52], tongue: [232, 110, 140], fly: [226, 230, 222],
+    petal: [[170, 56, 98], [214, 104, 146], [240, 164, 194], [252, 218, 232]], stamen: [240, 192, 60], duck: [110, 160, 70], text: [196, 212, 198], tileWash: 0,
+  };
+  let P = LIGHT;
+
+  const FROG_GLYPHS = "o+%x8@#";
+  const PAD_GLYPHS = ":;=+";
+  const SUB = [0.25, 0.25, 0.75, 0.25, 0.25, 0.75, 0.75, 0.75];
+
+  // ── canvas / grid ───────────────────────────────────────────────────
+  const page = document.getElementById("page");
+  const canvas = document.getElementById("pond");
+  const ctx = canvas.getContext("2d");
+  const statsEl = document.getElementById("stats");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+
+  let W = 0, H = 0, dpr = 1, cw = 10, ch = 12, cols = 0, rows = 0;
+  let gGlyph, gColor, gAlpha, gTile, gTileA, gKind, gShadow, gDim, energy, energyTmp;
+  const KIND_PAD = 1, KIND_FROG = 2, KIND_TONGUE = 3;
+  const styleCache = new Map();
+  const style = rgb => { let s = styleCache.get(rgb); if (!s) { s = `rgb(${rgb >>> 16},${(rgb >>> 8) & 255},${rgb & 255})`; styleCache.set(rgb, s); } return s; };
+
+  function allocGrid() {
+    const n = cols * rows;
+    gGlyph = new Uint16Array(n); gColor = new Uint32Array(n); gAlpha = new Float32Array(n);
+    gTile = new Uint32Array(n); gTileA = new Float32Array(n); gKind = new Uint8Array(n);
+    gShadow = new Uint8Array(n); gDim = new Float32Array(n).fill(1);
+    energy = new Float32Array(n); energyTmp = new Float32Array(n);
+  }
+  const cellIndex = (x, y) => {
+    const c = Math.floor(x / cw), r = Math.floor(y / ch);
+    return c < 0 || r < 0 || c >= cols || r >= rows ? -1 : r * cols + c;
+  };
+  function writeCell(i, kind, glyph, rgb, alpha, tile, tileA) {
+    gKind[i] = kind; gGlyph[i] = glyph.charCodeAt(0); gColor[i] = pack(rgb); gAlpha[i] = alpha;
+    gTile[i] = tile ? pack(tile) : 0; gTileA[i] = tile ? tileA : 0;
+  }
+
+  // ── world ───────────────────────────────────────────────────────────
+  const S = { t: 0, L: 70, pads: [], frogs: [], flies: [], ripples: [], labels: [], flashes: [], duck: [], hops: 0, caught: 0, avoid: null, pointer: { x: 0, y: 0, active: false } };
+
+  function contentBox() {
+    const el = document.querySelector("[data-avoid]");
+    if (!el) return null;
+    const o = canvas.getBoundingClientRect(), b = el.getBoundingClientRect();
+    return { left: b.left - o.left, top: b.top - o.top, right: b.right - o.left, bottom: b.bottom - o.top };
+  }
+
+  function computeDim() {
+    gDim.fill(1);
+    const b = S.avoid; if (!b) return;
+    const pad = cw * 4;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const x = c * cw + cw / 2, y = r * ch + ch / 2;
+      const d = Math.hypot(Math.max(b.left - x, 0, x - b.right), Math.max(b.top - y, 0, y - b.bottom));
+      gDim[r * cols + c] = 0.15 + 0.85 * smooth(0, pad, d);
+    }
+  }
+
+  function initWorld() {
+    S.avoid = contentBox();
+    computeDim();
+    S.L = clamp(Math.min(W, 1100) * 0.1, 70, 108);
+    const L = S.L;
+    S.pads = []; S.frogs = []; S.flies = []; S.ripples = []; S.labels = []; S.flashes = [];
+    const b = S.avoid;
+    const free = W * H - (b ? (b.right - b.left) * (b.bottom - b.top) : 0);
+    const want = clamp(Math.round(free / (Math.PI * (L * 2.0) ** 2)), 5, 14);
+    for (let tries = 0; tries < 2000 && S.pads.length < want; tries++) {
+      const r = L * rand(0.74, 0.98);
+      const x = rand(r + 6, W - r - 6), y = rand(r + 6, H - r - 40);
+      if (b && x > b.left - r - 28 && x < b.right + r + 28 && y > b.top - r - 28 && y < b.bottom + r + 28) continue;
+      if (S.pads.some(p => Math.hypot(p.x0 - x, p.y0 - y) < p.r + r + L * 0.45)) continue;
+      const id = S.pads.length + 1;
+      S.pads.push({
+        id, x0: x, y0: y, x, y, r, rot0: rand(0, Math.PI * 2), rot: 0, occ: null, wob: 0, wobT: -9,
+        bronze: Math.random() < 0.25 ? rand(0.25, 0.5) : 0,
+        flower: Math.random() < 0.3 ? { a: rand(0, 6.28), d: rand(0.35, 0.55), r: r * rand(0.3, 0.38) } : null,
+      });
+    }
+    const names = ["leopard", "tree", "golden"];
+    const nf = clamp(Math.round(S.pads.length * 0.5), 3, 6);
+    const order = S.pads.slice().sort(() => Math.random() - 0.5);
+    for (let i = 0; i < Math.min(nf, order.length - 1); i++) {
+      const pad = order[i];
+      const f = {
+        id: i + 7, species: names[i % names.length], pad, ox: rand(-0.15, 0.15) * pad.r, oy: rand(-0.15, 0.15) * pad.r,
+        x: pad.x, y: pad.y, angle: rand(0, 6.28), targetAngle: 0, state: "sit", t0: 0, z: 0, ext: 0, squash: 1, sac: 0,
+        croakT: -9, blinkUntil: 0, blinkNext: rand(1, 4), next: rand(1.5, 6), target: null, fly: null,
+      };
+      f.targetAngle = f.angle;
+      f.marks = frogMarks(f);
+      pad.occ = f; pad.flower = null;
+      S.frogs.push(f);
+    }
+    S.duck = [];
+    const nd = Math.round((W * H) / 9000);
+    for (let i = 0; i < nd; i++) S.duck.push({ x: rand(0, W), y: rand(0, H), ph: rand(0, 6.28), big: Math.random() < 0.3 });
+    updateStats(true);
+  }
+
+  // Each frog gets fixed markings seeded by its id: leopard spots, a cream side stripe on tree frogs, black spots on golden ones.
+  function frogMarks(f) {
+    const r = j => hash3(f.id, j, 41);
+    const spots = [];
+    if (f.species === "leopard") {
+      for (let j = 0; j < 8; j++) spots.push({ u: -0.3 + r(j) * 0.52, v: (r(j + 20) - 0.5) * 0.36, r: 0.045 + r(j + 40) * 0.03 });
+    } else if (f.species === "golden") {
+      for (let j = 0; j < 5; j++) spots.push({ u: -0.28 + r(j) * 0.5, v: (r(j + 20) - 0.5) * 0.3, r: 0.035 + r(j + 40) * 0.025 });
+    }
+    return spots;
+  }
+
+  // ── frog shape ──────────────────────────────────────────────────────
+  // Joints as fractions of length, (u forward, v out to the side); sitting folds the legs in a Z, jumping trails them back.
+  const J = {
+    sit: { hip: [-0.26, 0.18], knee: [0.04, 0.37], ankle: [-0.3, 0.34], toe: [-0.05, 0.48], sh: [0.12, 0.2], hand: [0.31, 0.32] },
+    air: { hip: [-0.34, 0.12], knee: [-0.62, 0.22], ankle: [-0.92, 0.16], toe: [-1.18, 0.23], sh: [0.1, 0.19], hand: [-0.04, 0.3] },
+  };
+  const FLAG_BODY = 1, FLAG_EYE = 2, FLAG_LEG = 3, FLAG_FOOT = 4, FLAG_SAC = 5;
+  const hit = { flag: 0, across: 0, along: 0, pupil: false };
+  const jp = (k, e) => [lerp(J.sit[k][0], J.air[k][0], e), lerp(J.sit[k][1], J.air[k][1], e)];
+
+  function bodyHalf(s) {
+    if (s < 0.22) return 0.2 * Math.pow(Math.sin((s / 0.22) * Math.PI / 2), 0.6);
+    if (s < 0.62) return 0.2 + 0.08 * smooth(0.22, 0.62, s);
+    return 0.28 * Math.sqrt(Math.max(0, 1 - ((s - 0.62) / 0.38) ** 2));
+  }
+
+  function classifyFrog(u, v, ext, sac, joints) {
+    const av = Math.abs(v);
+    hit.flag = 0; hit.pupil = false;
+    const ed = Math.hypot(u - 0.24, av - 0.17);
+    if (ed < 0.095) { hit.flag = FLAG_EYE; hit.across = ed / 0.095; hit.pupil = ed < 0.05; return true; }
+    const s = (0.42 - u) / 0.84;
+    if (s >= 0 && s <= 1) {
+      const w = bodyHalf(s);
+      if (av <= w) { hit.flag = FLAG_BODY; hit.across = av / w; return true; }
+    }
+    const { hip, knee, ankle, toe, sh, hand } = joints;
+    let d = segDist(u, av, hip[0], hip[1], knee[0], knee[1]);
+    if (d < 0.075) { hit.flag = FLAG_LEG; hit.across = d / 0.075; hit.along = SEG_T * 0.4; return true; }
+    d = segDist(u, av, knee[0], knee[1], ankle[0], ankle[1]);
+    if (d < 0.055) { hit.flag = FLAG_LEG; hit.across = d / 0.055; hit.along = 0.4 + SEG_T * 0.4; return true; }
+    d = segDist(u, av, ankle[0], ankle[1], toe[0], toe[1]);
+    const webR = 0.035 + 0.045 * SEG_T;
+    if (d < webR) { hit.flag = FLAG_FOOT; hit.across = d / webR; return true; }
+    d = segDist(u, av, sh[0], sh[1], hand[0], hand[1]);
+    if (d < 0.042) { hit.flag = FLAG_LEG; hit.across = d / 0.042; hit.along = SEG_T; return true; }
+    if (Math.hypot(u - hand[0], av - hand[1]) < 0.055) { hit.flag = FLAG_FOOT; hit.across = 0.5; return true; }
+    if (sac > 0.05) {
+      const ru = 0.1 + 0.08 * sac, rv = 0.1 + 0.24 * sac;
+      const e = ((u - 0.33) / ru) ** 2 + (v / rv) ** 2;
+      if (e < 1) { hit.flag = FLAG_SAC; hit.across = Math.sqrt(e); return true; }
+    }
+    return false;
+  }
+
+  function rasterFrog(f) {
+    const sp = SPECIES[f.species];
+    const size = S.L * (1 + 0.38 * f.z) * f.squash;
+    const ca = Math.cos(f.angle), sa = Math.sin(f.angle);
+    const joints = { hip: jp("hip", f.ext), knee: jp("knee", f.ext), ankle: jp("ankle", f.ext), toe: jp("toe", f.ext), sh: jp("sh", f.ext), hand: jp("hand", f.ext) };
+    const reach = size * 1.3;
+    const c0 = Math.max(0, Math.floor((f.x - reach) / cw)), c1 = Math.min(cols - 1, Math.floor((f.x + reach) / cw));
+    const r0 = Math.max(0, Math.floor((f.y - reach) / ch)), r1 = Math.min(rows - 1, Math.floor((f.y + reach) / ch));
+    const blink = S.t < f.blinkUntil;
+    const sdc = Math.round((2 + f.z * 30) / cw), sdr = Math.round((3 + f.z * 38) / ch);
+    const local = (px, py) => {
+      const dx = (px - f.x) / size, dy = (py - f.y) / size;
+      return [dx * ca + dy * sa, -dx * sa + dy * ca];
+    };
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+      const x = c * cw, y = r * ch;
+      let [u, v] = local(x + cw / 2, y + ch / 2);
+      let centerHit = classifyFrog(u, v, f.ext, f.sac, joints);
+      let flag = hit.flag, across = hit.across, along = hit.along, pupil = hit.pupil;
+      let hits = centerHit ? 1 : 0;
+      for (let q = 0; q < SUB.length; q += 2) {
+        const [su, sv] = local(x + SUB[q] * cw, y + SUB[q + 1] * ch);
+        if (!classifyFrog(su, sv, f.ext, f.sac, joints)) continue;
+        if (hits === 0) { flag = hit.flag; across = hit.across; along = hit.along; pupil = hit.pupil; u = su; v = sv; }
+        hits++;
+      }
+      if (!hits) continue;
+      const i = r * cols + c;
+      const cov = hits / 5;
+      const key = (hash3(Math.round(u * 40), Math.round(v * 40), f.id) * 4294967295) >>> 0;
+
+      // Shading: a dome lit from the top-left.
+      let lum;
+      if (flag === FLAG_BODY) {
+        const eu = u / 0.44, ev = v / 0.3, e = Math.min(1, Math.hypot(eu, ev));
+        const nx = eu * ca - ev * sa, ny = eu * sa + ev * ca, nl = Math.hypot(nx, ny) || 1;
+        lum = 0.2 + 0.55 * Math.sqrt(Math.max(0, 1 - e * e)) + 0.25 * e * (-(0.6 * nx + 0.8 * ny) / nl);
+      } else lum = 0.18 + 0.42 * Math.sqrt(Math.max(0, 1 - across * across));
+      lum = clamp(lum + (vnoise(u * 12 + f.id, v * 12, f.id) - 0.5) * 0.2, 0, 1);
+
+      let tile, glyph = " ", rgb, alpha = P.alpha, tileA = P.alpha;
+      if (flag === FLAG_EYE) {
+        if (blink) { tile = ramp(sp.skin, lum * 0.8); glyph = "-"; rgb = shade(tile, P.ink); }
+        else if (pupil || cov > 0.6) { tile = pupil ? P.eye : mix(P.eye, P.iris, 0.85); glyph = pupil ? "o" : "@"; rgb = pupil ? P.iris : P.eye; }
+        else { tile = P.iris; glyph = "."; rgb = P.eye; }
+      } else if (flag === FLAG_SAC) {
+        tile = mix(P.bg, [238, 230, 196], 0.7); tileA = P.alpha * 0.55 * cov; glyph = key % 3 ? " " : "o"; rgb = shade(tile, P.ink);
+      } else {
+        tile = ramp(sp.skin, flag === FLAG_BODY ? lum : lum * 0.85);
+        if (flag === FLAG_BODY) {
+          for (const m of f.marks) {
+            const wob = (vnoise(u * 20, v * 20, f.id + 3) - 0.5) * 0.4;
+            if (((u - m.u) / m.r) ** 2 + ((v - m.v) / m.r) ** 2 < 1 + wob) { tile = ramp(sp.mark, lum); break; }
+          }
+          if (f.species === "tree") {
+            const s = (0.42 - u) / 0.84, w = bodyHalf(clamp(s, 0, 1)) || 1, a = Math.abs(v) / w;
+            if (s > 0.18 && s < 0.86 && a > 0.62 && a < 0.84) tile = mix(tile, ramp(sp.mark, lum), 0.8);
+          }
+          // A band of shine slides over the wet back.
+          const sheen = Math.max(0, Math.sin(u * 9 - S.t * 1.5 + f.id) - 0.8) / 0.2;
+          if (sheen > 0) tile = mix(tile, [255, 255, 240], sheen * 0.25);
+        } else if (flag === FLAG_LEG && f.species !== "tree" && Math.sin(along * Math.PI * 7) > 0.45) {
+          tile = mix(tile, ramp(sp.mark, lum), 0.75);
+        }
+        if (hits === 5) {
+          const jitter = (key >>> 4) % 3;
+          glyph = FROG_GLYPHS[clamp(Math.round((1 - lum) * 4) + jitter, 0, FROG_GLYPHS.length - 1)];
+          rgb = shade(tile, P.ink);
+          if (flag === FLAG_FOOT) glyph = key % 2 ? "=" : "-";
+          const sc = c + sdc, sr = r + sdr;
+          if (sc < cols && sr < rows) gShadow[sr * cols + sc] = 1;
+        } else {
+          tileA = P.alpha * cov * 0.8;
+          if (key % 2 === 0) { glyph = "."; rgb = shade(tile, P.ink); } else rgb = tile;
+        }
+      }
+      if (P.tileWash) tile = mix(tile, P.bg, P.tileWash);
+      writeCell(i, KIND_FROG, glyph, rgb || tile, alpha, tile, tileA);
+    }
+  }
+
+  // ── lily pads ───────────────────────────────────────────────────────
+  function rasterPad(p) {
+    const scale = 1 - p.wob;
+    const R = p.r * scale;
+    const c0 = Math.max(0, Math.floor((p.x - R) / cw)), c1 = Math.min(cols - 1, Math.floor((p.x + R) / cw));
+    const r0 = Math.max(0, Math.floor((p.y - R) / ch)), r1 = Math.min(rows - 1, Math.floor((p.y + R) / ch));
+    const step = (Math.PI * 2) / 9;
+    const inPad = (px, py) => {
+      const dx = px - p.x, dy = py - p.y, d = Math.hypot(dx, dy) / R;
+      if (d > 1) return -1;
+      const a = angDiff(p.rot, Math.atan2(dy, dx));
+      if (Math.abs(a) < 0.24 && d > 0.06) return -1; // the notch
+      return d;
+    };
+    const fl = p.flower;
+    const fx = fl ? p.x + Math.cos(fl.a + p.rot) * fl.d * R : 0, fy = fl ? p.y + Math.sin(fl.a + p.rot) * fl.d * R : 0;
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+      const x = c * cw, y = r * ch, cx = x + cw / 2, cy = y + ch / 2;
+      const d = inPad(cx, cy);
+      let hits = d >= 0 ? 1 : 0;
+      for (let q = 0; q < SUB.length; q += 2) if (inPad(x + SUB[q] * cw, y + SUB[q + 1] * ch) >= 0) hits++;
+      if (!hits) continue;
+      const i = r * cols + c;
+      const dx = cx - p.x, dy = cy - p.y, dd = Math.max(0, d);
+      const ramped = p.bronze ? (t => mix(ramp(P.pad, t), ramp(P.bronze, t), p.bronze * (1 - dd))) : (t => ramp(P.pad, t));
+
+      // Water lily bloom sitting on the pad.
+      if (fl) {
+        const fdx = cx - fx, fdy = cy - fy, q = Math.hypot(fdx, fdy) / fl.r;
+        if (q < 1) {
+          const phi = Math.atan2(fdy, fdx) - p.rot;
+          const petal = 0.55 + 0.45 * Math.abs(Math.cos(phi * 4));
+          if (q < 0.3) { const t = P.stamen; writeCell(i, KIND_PAD, q < 0.15 ? "*" : "o", shade(t, P.ink), P.alpha, t, P.alpha); continue; }
+          if (q < petal) { const t = ramp(P.petal, 0.25 + q * 0.75); writeCell(i, KIND_PAD, lineGlyph(fdx, fdy), shade(t, P.ink), P.alpha, t, P.alpha); continue; }
+        }
+      }
+
+      // Flat and waxy: brighter toward the light, a lit upturned rim, slow grain.
+      const facing = -(0.6 * dx + 0.8 * dy) / R;
+      let lum = 0.4 + 0.18 * facing + (dd > 0.86 ? 0.22 : 0) + (vnoise(dx / 14 + p.id * 7, dy / 14, p.id) - 0.5) * 0.3;
+      let tile = ramped(clamp(lum, 0, 1));
+      if (P.tileWash) tile = mix(tile, P.bg, P.tileWash);
+      if (hits < 5) {
+        writeCell(i, KIND_PAD, lineGlyph(-dy, dx), shade(tile, P.ink), P.padAlpha * 0.9, tile, P.padAlpha * hits / 5 * 0.6);
+        continue;
+      }
+      const ang = angDiff(p.rot, Math.atan2(dy, dx));
+      const k = ang / step, off = Math.abs(k - Math.round(k)) * step * Math.hypot(dx, dy);
+      let glyph, a = P.padAlpha * 0.4;
+      if (dd < 0.1) { glyph = "+"; a = P.padAlpha; }
+      else if (off < cw * 0.45 && dd > 0.12) { glyph = lineGlyph(dx, dy); tile = mix(tile, ramped(1), 0.2); a = P.padAlpha * 0.6; }
+      else {
+        const key = (hash3(Math.round(dx / cw * 1.5), Math.round(dy / ch * 1.5), p.id) * 1e6) | 0;
+        glyph = key % 2 === 0 ? " " : PAD_GLYPHS[clamp(Math.round((1 - lum) * 2) + (key % 2), 0, 3)];
+      }
+      writeCell(i, KIND_PAD, glyph, shade(tile, P.ink), a, tile, P.padAlpha);
+    }
+  }
+
+  // ── behaviour ───────────────────────────────────────────────────────
+  const freePads = f => S.pads.filter(p => !p.occ && p !== f.pad);
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const maxJump = () => S.L * 5.5;
+
+  function nearPad(f, far) {
+    const list = freePads(f).filter(p => dist(p, f) < maxJump()).sort((a, b) => dist(a, f) - dist(b, f));
+    if (!list.length) return null;
+    const pick = far ? list.slice(1, 5) : list.slice(0, 3);
+    return (pick.length ? pick : list)[Math.floor(Math.random() * (pick.length || list.length))];
+  }
+
+  function startJump(f, p) {
+    if (!p || p.occ) return;
+    p.occ = f; f.target = p;
+    f.tox = rand(-0.15, 0.15) * p.r; f.toy = rand(-0.15, 0.15) * p.r;
+    f.state = "crouch"; f.t0 = S.t;
+    f.targetAngle = Math.atan2(p.y + f.toy - f.y, p.x + f.tox - f.x);
+    const d = Math.hypot(p.x + f.tox - f.x, p.y + f.toy - f.y);
+    f.dur = clamp(0.38 + d / 800, 0.42, 0.95);
+    f.hmax = clamp(d / (S.L * 3), 0.45, 1.1);
+  }
+
+  function addRipple(x, y, strength) { S.ripples.push({ x, y, born: S.t, strength }); }
+  function splash(x, y, k) {
+    const i = cellIndex(x, y);
+    if (i < 0) return;
+    const c = i % cols, r = (i / cols) | 0;
+    for (let dr = -2; dr <= 2; dr++) for (let dc = -3; dc <= 3; dc++) {
+      const cc = c + dc, rr = r + dr;
+      if (cc >= 0 && rr >= 0 && cc < cols && rr < rows) energy[rr * cols + cc] = Math.min(1.5, energy[rr * cols + cc] + k);
+    }
+  }
+  function label(text, x, y) { S.labels.push({ text, x, y, born: S.t }); }
+
+  function stepFrog(f, dt) {
+    const t = S.t;
+    const turn = rate => { const d = angDiff(f.angle, f.targetAngle); f.angle += clamp(d, -rate * dt, rate * dt); };
+    if (t > f.blinkNext) { f.blinkUntil = t + 0.14; f.blinkNext = t + rand(2, 6); }
+    const ca = t - f.croakT;
+    f.sac = ca >= 0 && ca < 1 ? Math.sin(ca * Math.PI * 2) ** 2 : 0;
+
+    if (f.state === "sit") {
+      f.x = f.pad.x + f.ox; f.y = f.pad.y + f.oy; f.z = 0; f.ext = 0; f.squash = 1;
+      turn(5);
+      const fly = nearestFly(f);
+      if (fly) {
+        const mx = f.x + Math.cos(f.angle) * S.L * 0.42, my = f.y + Math.sin(f.angle) * S.L * 0.42;
+        const d = Math.hypot(fly.x - mx, fly.y - my);
+        if (d < S.L * 1.9) {
+          f.targetAngle = Math.atan2(fly.y - f.y, fly.x - f.x);
+          if (Math.abs(angDiff(f.angle, f.targetAngle)) < 0.3 && !fly.target) { f.state = "tongue"; f.t0 = t; f.fly = fly; fly.target = f; f.gotFly = false; }
+          return;
+        }
+        if (!fly.hunter || fly.hunter === f || !S.frogs.includes(fly.hunter)) {
+          const here = dist(f, fly);
+          const best = freePads(f).filter(p => dist(p, f) < maxJump() && dist(p, fly) < here - S.L * 0.6).sort((a, b) => dist(a, fly) - dist(b, fly))[0];
+          if (best) { fly.hunter = f; startJump(f, best); return; }
+        }
+      }
+      if (t > f.next) {
+        const r = Math.random();
+        if (r < 0.55) startJump(f, nearPad(f));
+        else if (r < 0.8) f.targetAngle = f.angle + rand(-1.6, 1.6);
+        else { f.croakT = t; label("ribbit", f.x, f.y - S.L * 0.7); }
+        f.next = t + rand(3, 9);
+      }
+    } else if (f.state === "crouch") {
+      f.x = f.pad.x + f.ox; f.y = f.pad.y + f.oy;
+      const p = (t - f.t0) / 0.26;
+      f.targetAngle = Math.atan2(f.target.y + f.toy - f.y, f.target.x + f.tox - f.x);
+      turn(14);
+      f.squash = 1 - 0.08 * Math.sin(Math.min(1, p) * Math.PI);
+      if (p >= 1) {
+        f.state = "air"; f.t0 = t; f.fx = f.x; f.fy = f.y; f.squash = 1;
+        const old = f.pad; old.occ = null; old.wobA = 0.06; old.wobT = t;
+        addRipple(old.x, old.y, 0.5); splash(old.x, old.y, 0.25);
+      }
+    } else if (f.state === "air") {
+      const p = Math.min(1, (t - f.t0) / f.dur);
+      const tx = f.target.x + f.tox, ty = f.target.y + f.toy;
+      const e = smooth(0, 1, p);
+      f.x = lerp(f.fx, tx, e); f.y = lerp(f.fy, ty, e);
+      f.z = 4 * p * (1 - p) * f.hmax;
+      f.ext = p < 0.14 ? p / 0.14 : p < 0.7 ? 1 : 1 - (p - 0.7) / 0.3;
+      f.targetAngle = Math.atan2(ty - f.fy, tx - f.fx); turn(10);
+      if (p >= 1) {
+        f.pad = f.target; f.ox = f.tox; f.oy = f.toy; f.target = null;
+        f.state = "land"; f.t0 = t; f.z = 0; f.ext = 0;
+        f.pad.wobA = 0.11; f.pad.wobT = t;
+        addRipple(f.pad.x, f.pad.y, 1); splash(f.pad.x, f.pad.y, 0.5);
+        S.hops++; updateStats();
+        f.next = t + rand(2, 7);
+      }
+    } else if (f.state === "land") {
+      f.x = f.pad.x + f.ox; f.y = f.pad.y + f.oy;
+      const p = (t - f.t0) / 0.22;
+      f.squash = 1 - 0.1 * Math.sin(Math.min(1, p) * Math.PI);
+      if (p >= 1) { f.state = "sit"; f.squash = 1; }
+    } else if (f.state === "tongue") {
+      f.x = f.pad.x + f.ox; f.y = f.pad.y + f.oy;
+      const p = (t - f.t0) / 0.34;
+      const fly = f.fly;
+      if (fly && S.flies.includes(fly)) f.targetAngle = Math.atan2(fly.y - f.y, fly.x - f.x);
+      turn(16);
+      f.tongue = p < 0.4 ? p / 0.4 : Math.max(0, 1 - (p - 0.4) / 0.6);
+      if (!f.gotFly && p >= 0.4) {
+        f.gotFly = true;
+        if (fly && S.flies.includes(fly)) {
+          S.flies.splice(S.flies.indexOf(fly), 1);
+          S.flashes.push({ x: fly.x, y: fly.y, born: t });
+          S.caught++; updateStats();
+          if (Math.random() < 0.5) label("gulp", f.x, f.y - S.L * 0.7);
+        }
+      }
+      if (p >= 1) { f.state = "sit"; f.tongue = 0; f.fly = null; f.next = t + rand(1.5, 4); }
+    }
+  }
+
+  function nearestFly(f) {
+    let best = null, bd = Infinity;
+    for (const fl of S.flies) { const d = dist(fl, f); if (d < bd && (!fl.target || fl.target === f)) { bd = d; best = fl; } }
+    return best;
+  }
+
+  function stepFlies(dt) {
+    for (const fl of S.flies) {
+      const age = S.t - fl.born;
+      if (age > 16 && !fl.leaving) { fl.leaving = true; const a = rand(0, 6.28); fl.vx = Math.cos(a) * 140; fl.vy = Math.sin(a) * 140; }
+      if (fl.leaving) { fl.ax += fl.vx * dt; fl.ay += fl.vy * dt; }
+      else { fl.ax += Math.sin(S.t * 0.7 + fl.ph) * 8 * dt; fl.ay += Math.cos(S.t * 0.6 + fl.ph * 2) * 8 * dt; }
+      fl.x = fl.ax + Math.sin(S.t * 6.5 + fl.ph) * 13;
+      fl.y = fl.ay + Math.sin(S.t * 8.9 + fl.ph * 2) * 8;
+    }
+    S.flies = S.flies.filter(fl => fl.target || (fl.x > -60 && fl.y > -60 && fl.x < W + 60 && fl.y < H + 60));
+  }
+
+  function step(dt) {
+    S.t += dt;
+    for (const p of S.pads) {
+      p.x = p.x0 + Math.sin(S.t * 0.07 + p.id) * 6;
+      p.y = p.y0 + Math.cos(S.t * 0.05 + p.id * 1.3) * 5;
+      p.rot = p.rot0 + Math.sin(S.t * 0.04 + p.id) * 0.18;
+      const a = S.t - p.wobT;
+      p.wob = a < 2 ? (p.wobA || 0) * Math.exp(-a * 3.5) * Math.cos(a * 13) : 0;
+    }
+    for (const d of S.duck) { d.x = (d.x + Math.sin(S.t * 0.1 + d.ph) * 2 * dt + W) % W; d.y = (d.y + Math.cos(S.t * 0.08 + d.ph) * 1.5 * dt + H) % H; }
+    stepFlies(dt);
+    for (const f of S.frogs) stepFrog(f, dt);
+    S.ripples = S.ripples.filter(r => S.t - r.born < 2.4);
+    S.labels = S.labels.filter(l => S.t - l.born < 1.6);
+    S.flashes = S.flashes.filter(l => S.t - l.born < 0.5);
+    if (S.pointer.active) { const i = cellIndex(S.pointer.x, S.pointer.y); if (i >= 0) energy[i] = Math.min(1.5, energy[i] + 0.1); }
+  }
+
+  // ── drawing ─────────────────────────────────────────────────────────
+  function glyphAt(i, g, rgb, a) {
+    ctx.globalAlpha = a * gDim[i];
+    ctx.fillStyle = style(pack(rgb));
+    ctx.fillText(g, (i % cols) * cw + cw / 2, ((i / cols) | 0) * ch + ch / 2 + 1);
+  }
+
+  function diffuse(dt) {
+    const decay = Math.exp(-dt * 1.1), e = energy, tmp = energyTmp;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const i = r * cols + c;
+      tmp[i] = (e[i] * 4 + (c > 0 ? e[i - 1] : e[i]) + (c < cols - 1 ? e[i + 1] : e[i]) + (r > 0 ? e[i - cols] : e[i]) + (r < rows - 1 ? e[i + cols] : e[i])) * 0.125 * decay;
+    }
+    energy = tmp; energyTmp = e;
+  }
+
+  function render(dt) {
+    if (!cols) return;
+    gGlyph.fill(0); gTileA.fill(0); gKind.fill(0); gShadow.fill(0);
+    for (const p of S.pads) rasterPad(p);
+    for (const f of S.frogs.slice().sort((a, b) => a.z - b.z)) rasterFrog(f);
+    // Tongues
+    for (const f of S.frogs) {
+      if (f.state !== "tongue" || !f.tongue) continue;
+      const mx = f.x + Math.cos(f.angle) * S.L * 0.42, my = f.y + Math.sin(f.angle) * S.L * 0.42;
+      const tgt = f.fly && S.flies.includes(f.fly) ? f.fly : { x: mx + Math.cos(f.angle) * S.L * 1.5, y: my + Math.sin(f.angle) * S.L * 1.5 };
+      const tx = lerp(mx, tgt.x, f.tongue), ty = lerp(my, tgt.y, f.tongue);
+      const n = Math.ceil(Math.hypot(tx - mx, ty - my) / (cw * 0.5));
+      for (let k = 0; k <= n; k++) {
+        const i = cellIndex(lerp(mx, tx, k / (n || 1)), lerp(my, ty, k / (n || 1)));
+        if (i < 0) continue;
+        writeCell(i, KIND_TONGUE, k === n ? "o" : lineGlyph(tx - mx, ty - my), shade(P.tongue, P.ink), P.alpha, P.tongue, P.alpha * 0.9);
+      }
+    }
+    diffuse(dt);
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.font = `600 ${Math.round(ch * 0.72)}px "DM Mono", ui-monospace, Menlo, monospace`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+
+    // duckweed specks on open water
+    for (const d of S.duck) {
+      const i = cellIndex(d.x, d.y);
+      if (i < 0 || gGlyph[i]) continue;
+      glyphAt(i, d.big ? "o" : ".", P.duck, 0.45);
+    }
+    // wake
+    for (let i = 0; i < energy.length; i++) {
+      const e = energy[i];
+      if (e < 0.22 || gGlyph[i] || gShadow[i]) continue;
+      glyphAt(i, e > 0.5 ? "-" : ".", P.water, Math.min(1, (e - 0.22) * 1.4) * 0.35);
+    }
+    // ripple rings, glyph following the tangent
+    for (const rp of S.ripples) {
+      const age = S.t - rp.born, fade = Math.pow(1 - age / 2.4, 1.5) * rp.strength;
+      for (let ring = 0; ring < 2; ring++) {
+        const radius = Math.max(0, age - ring * 0.45) * 52 * (0.7 + 0.5 * rp.strength) + S.L * 0.6;
+        if (age - ring * 0.45 < 0) continue;
+        const band = cw * 0.6;
+        const c0 = Math.max(0, Math.floor((rp.x - radius - cw) / cw)), c1 = Math.min(cols - 1, Math.floor((rp.x + radius + cw) / cw));
+        const r0 = Math.max(0, Math.floor((rp.y - radius - ch) / ch)), r1 = Math.min(rows - 1, Math.floor((rp.y + radius + ch) / ch));
+        for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+          const i = r * cols + c;
+          if (gGlyph[i]) continue;
+          const dx = c * cw + cw / 2 - rp.x, dy = r * ch + ch / 2 - rp.y;
+          if (Math.abs(Math.hypot(dx, dy) - radius) > band) continue;
+          glyphAt(i, ring ? "." : lineGlyph(-dy, dx), P.water, fade * (ring ? 0.3 : 0.55));
+        }
+      }
+    }
+    // shadows on open water
+    for (let i = 0; i < gShadow.length; i++) if (gShadow[i] && !gGlyph[i]) glyphAt(i, ":", P.shadow, P.shadowAlpha);
+
+    // tiles and etched glyphs
+    for (let i = 0; i < gGlyph.length; i++) {
+      const code = gGlyph[i];
+      if (!code) continue;
+      const x = (i % cols) * cw, y = ((i / cols) | 0) * ch;
+      if (gTileA[i] > 0) {
+        let tile = gTile[i];
+        if (gShadow[i] && gKind[i] === KIND_PAD) {
+          const t = [tile >>> 16, (tile >>> 8) & 255, tile & 255];
+          tile = pack(mix(t, P.shadow, 0.3));
+        }
+        ctx.globalAlpha = gTileA[i] * gDim[i];
+        ctx.fillStyle = style(tile);
+        ctx.fillRect(x + 1, y + 1, cw - 1, ch - 1);
+      }
+      if (code === 32) continue;
+      ctx.globalAlpha = gAlpha[i] * gDim[i];
+      ctx.fillStyle = style(gColor[i]);
+      ctx.fillText(String.fromCharCode(code), x + cw / 2, y + ch / 2 + 1);
+    }
+
+    // flies
+    for (const fl of S.flies) {
+      const i = cellIndex(fl.x, fl.y);
+      if (i < 0) continue;
+      glyphAt(i, Math.floor(S.t * 18 + fl.ph) % 2 ? "*" : "x", P.fly, 0.9);
+      const sh = cellIndex(fl.x + 14, fl.y + 22);
+      if (sh >= 0 && !gGlyph[sh]) glyphAt(sh, ".", P.shadow, P.shadowAlpha);
+    }
+    for (const fx of S.flashes) {
+      const i = cellIndex(fx.x, fx.y); if (i < 0) continue;
+      const k = (S.t - fx.born) / 0.5;
+      glyphAt(i, k < 0.35 ? "*" : k < 0.7 ? "+" : ".", P.tongue, 1 - k * k);
+    }
+    // labels rise and fade
+    for (const l of S.labels) {
+      const k = (S.t - l.born) / 1.6;
+      const y = l.y - k * ch * 2;
+      const x0 = l.x - (l.text.length * cw) / 2;
+      for (let j = 0; j < l.text.length; j++) {
+        const i = cellIndex(x0 + j * cw + cw / 2, y);
+        if (i >= 0) glyphAt(i, l.text[j], P.text, (1 - k) * 0.85);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ── stats ───────────────────────────────────────────────────────────
+  let lastStats = "";
+  function updateStats() {
+    const s = `frogs ${S.frogs.length} · hops ${S.hops} · flies ${S.caught}`;
+    if (s !== lastStats) { statsEl.textContent = s; lastStats = s; }
+  }
+
+  // ── sizing, theme, loop ─────────────────────────────────────────────
+  function isDark() {
+    const t = document.documentElement.getAttribute("data-theme");
+    if (t) return t === "dark";
+    return matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function applyTheme() { P = isDark() ? DARK : LIGHT; if (reduce.matches) render(1 / 60); }
+
+  let lastW = 0, lastH = 0;
+  function resize() {
+    const r = page.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return;
+    W = r.width; H = r.height; dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cw = clamp(Math.round(W / 125), 8, 12); ch = cw + 2;
+    cols = Math.ceil(W / cw); rows = Math.ceil(H / ch);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    allocGrid();
+    if (Math.abs(W - lastW) > 40 || Math.abs(H - lastH) > 120 || !S.pads.length) initWorld();
+    else { S.avoid = contentBox(); computeDim(); }
+    lastW = W; lastH = H;
+    if (reduce.matches) drawStill();
+  }
+
+  function drawStill() { render(1 / 60); }
+
+  let last = 0, acc = 0, raf = 0;
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now; acc += dt;
+    let n = 0;
+    while (acc >= 1 / 60 && n < 4) { step(1 / 60); acc -= 1 / 60; n++; }
+    if (n === 4) acc = 0;
+    render(dt);
+    raf = requestAnimationFrame(frame);
+  }
+  function schedule() {
+    cancelAnimationFrame(raf);
+    if (reduce.matches) { drawStill(); return; }
+    last = performance.now(); raf = requestAnimationFrame(frame);
+  }
+
+  function toLocal(e) { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+  window.addEventListener("pointermove", e => { const p = toLocal(e); S.pointer.x = p.x; S.pointer.y = p.y; S.pointer.active = true; }, { passive: true });
+  document.documentElement.addEventListener("pointerleave", () => { S.pointer.active = false; });
+  window.addEventListener("click", e => {
+    if (e.target.closest("a, button")) return;
+    const { x, y } = toLocal(e);
+    // Clicking a frog startles it onto another pad.
+    const f = S.frogs.find(f => f.state === "sit" && Math.hypot(f.x - x, f.y - y) < S.L * 0.6);
+    if (f) { startJump(f, nearPad(f, true)); label("!", f.x, f.y - S.L * 0.7); return; }
+    if (S.flies.length >= 5) S.flies.shift();
+    S.flies.push({ x, y, ax: x, ay: y, born: S.t, ph: rand(0, 6.28), hunter: null, target: null, leaving: false, vx: 0, vy: 0 });
+    if (reduce.matches) drawStill();
+  });
+
+  // ── pages: #projects and #blog swap the text; the pond stays ──────────
+  const VIEWS = ["pond", "projects", "blog"];
+  function route() {
+    const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "pond";
+    document.querySelectorAll("section.view").forEach(s => { s.hidden = s.dataset.view !== v; });
+    document.querySelectorAll("nav a[data-view]").forEach(a => {
+      if (a.dataset.view === v) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+    });
+    document.title = v === "pond" ? "Aravind" : v[0].toUpperCase() + v.slice(1) + " · Aravind";
+    if (cols) { S.avoid = contentBox(); computeDim(); if (reduce.matches) drawStill(); }
+  }
+  window.addEventListener("hashchange", route);
+  route();
+
+  new ResizeObserver(resize).observe(page);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+  new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  reduce.addEventListener("change", schedule);
+
+  const start = () => { applyTheme(); resize(); if (reduce.matches) { for (let i = 0; i < 60; i++) step(1 / 60); drawStill(); } schedule(); };
+  (document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(start, start);
+})();
+</script>
+</body>
+</html>
