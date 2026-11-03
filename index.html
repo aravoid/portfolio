@@ -157,6 +157,8 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
     bronze: [[110, 52, 40], [146, 76, 52], [176, 108, 70], [204, 146, 102], [226, 186, 146]],
     eye: [22, 20, 16], iris: [204, 152, 36], tongue: [212, 86, 116], fly: [28, 28, 32],
     petal: [[176, 52, 96], [212, 96, 138], [238, 156, 186], [250, 214, 228]], stamen: [232, 178, 40], duck: [92, 138, 58], text: [54, 66, 58], tileWash: 0.12,
+    koi: { white: [112, 108, 104], red: [204, 62, 28], black: [36, 33, 40], fin: [138, 132, 126], eye: [24, 22, 26], alpha: 0.9, depthFloor: 0.55, tile: [0.78, 0.55], ink: 0.45,
+      hi: [[138, 24, 22], [184, 38, 24], [222, 62, 28], [238, 100, 38], [244, 140, 66], [248, 176, 116]] },
   };
   const DARK = {
     bg: [15, 21, 18], ink: 0.42, alpha: 0.86, padAlpha: 0.5, water: [226, 238, 230], shadow: [0, 0, 0], shadowAlpha: 0.55,
@@ -164,6 +166,8 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
     bronze: [[96, 44, 34], [130, 66, 46], [160, 96, 62], [190, 134, 92], [214, 176, 136]],
     eye: [12, 12, 10], iris: [226, 176, 52], tongue: [232, 110, 140], fly: [226, 230, 222],
     petal: [[170, 56, 98], [214, 104, 146], [240, 164, 194], [252, 218, 232]], stamen: [240, 192, 60], duck: [110, 160, 70], text: [196, 212, 198], tileWash: 0,
+    koi: { white: [236, 228, 218], red: [232, 96, 56], black: [92, 90, 108], fin: [214, 206, 198], eye: [20, 20, 26], alpha: 0.8, depthFloor: 0.4, tile: [0.68, 0.98], ink: 0.42,
+      hi: [[112, 22, 24], [168, 34, 28], [214, 58, 30], [240, 96, 34], [250, 138, 52], [255, 178, 96]] },
   };
   let P = LIGHT;
 
@@ -180,7 +184,7 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
 
   let W = 0, H = 0, dpr = 1, cw = 10, ch = 12, cols = 0, rows = 0;
   let gGlyph, gColor, gAlpha, gTile, gTileA, gKind, gShadow, gDim, energy, energyTmp;
-  const KIND_PAD = 1, KIND_FROG = 2, KIND_TONGUE = 3;
+  const KIND_PAD = 1, KIND_FROG = 2, KIND_TONGUE = 3, KIND_KOI = 4;
   const styleCache = new Map();
   const style = rgb => { let s = styleCache.get(rgb); if (!s) { s = `rgb(${rgb >>> 16},${(rgb >>> 8) & 255},${rgb & 255})`; styleCache.set(rgb, s); } return s; };
 
@@ -201,7 +205,7 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
   }
 
   // ── world ───────────────────────────────────────────────────────────
-  const S = { t: 0, L: 70, pads: [], frogs: [], flies: [], ripples: [], labels: [], flashes: [], duck: [], hops: 0, caught: 0, avoid: null, pointer: { x: 0, y: 0, active: false } };
+  const S = { t: 0, L: 70, pads: [], frogs: [], koi: [], flies: [], ripples: [], labels: [], flashes: [], duck: [], hops: 0, caught: 0, avoid: null, pointer: { x: 0, y: 0, active: false, speed: 0 } };
 
   function contentBox() {
     const el = document.querySelector("[data-avoid]");
@@ -257,6 +261,9 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
       pad.occ = f; pad.flower = null;
       S.frogs.push(f);
     }
+    S.koi = [];
+    const nk = clamp(Math.round((W * H) / 110000), 4, 10);
+    for (let i = 0; i < nk; i++) S.koi.push(makeKoi(i));
     S.duck = [];
     const nd = Math.round((W * H) / 9000);
     for (let i = 0; i < nd; i++) S.duck.push({ x: rand(0, W), y: rand(0, H), ph: rand(0, 6.28), big: Math.random() < 0.3 });
@@ -460,6 +467,266 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
     }
   }
 
+  // ── koi (ported from the koi-pond renderer) ─────────────────────────
+  const KOI_NODES = 20;
+  const KF_BODY = 1, KF_FIN = 2, KF_EYE = 3, KF_BARBEL = 5;
+  const KOI_GLYPHS = "t%SX8@#";
+  const khit = { flag: 0, across: 1 };
+
+  // Top-down outline as a fraction of length: blunt round head, plump shoulders, narrow tail stalk.
+  function koiHalf(s) {
+    if (s < 0.12) return 0.11 * Math.pow(Math.sin((s / 0.12) * Math.PI / 2), 0.55);
+    if (s < 0.3) return 0.11 + 0.025 * smooth(0.12, 0.3, s);
+    return 0.033 + 0.102 * (1 - smooth(0.3, 0.74, s));
+  }
+  const koiTail = s => 0.03 + 0.15 * Math.pow(smooth(0.7, 1, s), 0.8);
+  function koiFin(s, a, rootS, angle, reach, width) {
+    const rootA = koiHalf(rootS) * 0.85, cA = Math.cos(angle), sA = Math.sin(angle);
+    const du = s - rootS, da = a - rootA;
+    const along = du * cA + da * sA - reach, perp = -du * sA + da * cA;
+    if ((along / reach) ** 2 + (perp / width) ** 2 > 1) return false;
+    khit.flag = KF_FIN; return true;
+  }
+  function koiClassify(s, a, past, flare, ahead, lateral) {
+    khit.flag = 0; khit.across = 1;
+    if (ahead > 0) {
+      if (ahead < 0.05 && Math.abs(lateral - (0.045 + ahead * 0.7)) < 0.016) { khit.flag = KF_BARBEL; return true; }
+      return false;
+    }
+    const w = koiHalf(s);
+    if (s <= 0.74 && a <= w) {
+      khit.across = a / w;
+      khit.flag = s > 0.055 && s < 0.1 && khit.across > 0.5 && khit.across < 0.85 ? KF_EYE : KF_BODY;
+      return true;
+    }
+    if (s > 0.68 && past <= 0) {
+      const tw = koiTail(s) * flare;
+      if (a <= tw && s <= 0.86 + 0.14 * (a / tw)) { khit.flag = KF_FIN; return true; }
+    }
+    return koiFin(s, a, 0.19, 0.85 + 0.5 * (flare - 1), 0.066 * flare, 0.04) || koiFin(s, a, 0.47, 0.75, 0.036, 0.018);
+  }
+
+  // Fixed markings per fish: kohaku red head and saddles, sanke adds black spots, tancho one red crown.
+  function koiMarkings(k) {
+    const r = j => hash3(k.id, j, 41);
+    if (k.variety === "tancho") return { red: [{ s: 0.11, v: 0, rs: 0.05, rv: 0.055 }], black: [] };
+    const red = [];
+    if (r(0) < 0.75) red.push({ s: 0.1, v: (r(1) - 0.5) * 0.03, rs: 0.055 + r(2) * 0.03, rv: 0.11 });
+    const saddles = 2 + Math.floor(r(3) * 2);
+    for (let j = 0; j < saddles; j++) {
+      const span = 0.42 / saddles;
+      red.push({ s: 0.25 + span * (j + 0.5) + (r(10 + j) - 0.5) * span * 0.3, v: (r(20 + j) - 0.5) * 0.05, rs: span * (0.32 + r(30 + j) * 0.12), rv: 0.09 + r(40 + j) * 0.05 });
+    }
+    const black = [];
+    if (k.variety === "sanke") for (let j = 0; j < 4 + Math.floor(r(50) * 3); j++) black.push({ s: 0.24 + r(60 + j) * 0.44, v: (r(70 + j) - 0.5) * 0.16, rs: 0.022, rv: 0.026 });
+    return { red, black };
+  }
+  const inPatch = (m, s, vn, wob) => ((s - m.s) / m.rs) ** 2 + ((vn - m.v) / m.rv) ** 2 < 1 + wob;
+
+  function makeKoi(id) {
+    const L = S.L * rand(1.4, 2.2);
+    let x = 0, y = 0;
+    for (let tries = 0; tries < 60; tries++) {
+      x = rand(L * 0.6, W - L * 0.6); y = rand(L * 0.4, H - L * 0.4);
+      const b = S.avoid, inText = b && x > b.left - 40 && x < b.right + 40 && y > b.top - 40 && y < b.bottom + 40;
+      if (!inText && !S.koi.some(o => Math.hypot(o.nodes[0] - x, o.nodes[1] - y) < L * 1.4)) break;
+    }
+    const heading = rand(0, Math.PI * 2);
+    const nodes = new Float32Array(KOI_NODES * 2), seg = L / (KOI_NODES - 1);
+    for (let n = 0; n < KOI_NODES; n++) { nodes[n * 2] = x - Math.cos(heading) * seg * n; nodes[n * 2 + 1] = y - Math.sin(heading) * seg * n; }
+    const vr = Math.random() * 6;
+    const k = {
+      id: id + 101, variety: vr < 3 ? "kohaku" : vr < 5 ? "sanke" : "tancho", length: L, nodes, heading, speed: 14, phase: rand(0, 6), finPhase: rand(0, 6),
+      turn: 0, wander: 0, beat: 0, burstUntil: 0, nextBurst: rand(0, 3), depth: rand(0.55, 0.9), depthTarget: 0.7, nextDive: rand(4, 12),
+      mode: "wander", modeUntil: rand(6, 14), circle: 1, startle: 0, fleeX: 0, fleeY: 0, nextSurface: rand(5, 15),
+    };
+    k.marks = koiMarkings(k);
+    return k;
+  }
+
+  // Random swimming: wander most of the time, sometimes loop in lazy circles, zig-zag, or cruise straight.
+  function stepKoi(k, dt) {
+    const t = S.t, L = k.length, nodes = k.nodes, hx = nodes[0], hy = nodes[1];
+    if (t > k.modeUntil) {
+      const r = Math.random();
+      k.mode = r < 0.45 ? "wander" : r < 0.7 ? "circle" : r < 0.88 ? "zigzag" : "cruise";
+      k.circle = Math.random() < 0.5 ? 1 : -1;
+      k.modeUntil = t + rand(5, 13);
+    }
+    let dx = Math.cos(k.heading), dy = Math.sin(k.heading);
+    k.wander = clamp(k.wander + (Math.random() - 0.5) * dt * 2.4, -0.9, 0.9);
+    let bias = k.wander;
+    if (k.mode === "circle") bias = 0.9 * k.circle;
+    else if (k.mode === "zigzag") bias = Math.sin(t * 0.9 + k.id) * 1.1;
+    else if (k.mode === "cruise") bias = k.wander * 0.2;
+    dx += Math.cos(k.heading + bias) * 0.8; dy += Math.sin(k.heading + bias) * 0.8;
+
+    // A fast swipe nearby spooks a koi.
+    if (S.pointer.active && S.pointer.speed > 900 && Math.hypot(S.pointer.x - hx, S.pointer.y - hy) < L * 0.9) { k.startle = 1; k.fleeX = S.pointer.x; k.fleeY = S.pointer.y; }
+    k.startle = Math.max(0, k.startle - dt * 0.6);
+    const fleeing = k.startle > 0.3;
+    if (fleeing) { const ox = hx - k.fleeX, oy = hy - k.fleeY, d = Math.hypot(ox, oy) || 1; dx += ox / d * 4 * k.startle; dy += oy / d * 4 * k.startle; }
+
+    for (const o of S.koi) {
+      if (o === k) continue;
+      for (let n = 0; n < KOI_NODES; n += 3) {
+        const ox = hx - o.nodes[n * 2], oy = hy - o.nodes[n * 2 + 1], d = Math.hypot(ox, oy), range = (L + o.length) * 0.28;
+        if (d < range && d > 1e-3) { const w = (1 - d / range) * 2.4; dx += ox / d * w; dy += oy / d * w; }
+      }
+      if (Math.hypot(o.nodes[0] - hx, o.nodes[1] - hy) < L * 1.6) { dx += Math.cos(o.heading) * 0.18; dy += Math.sin(o.heading) * 0.18; }
+    }
+    // Steer around the text.
+    const b = S.avoid;
+    if (b) {
+      let ox = hx - clamp(hx, b.left, b.right), oy = hy - clamp(hy, b.top, b.bottom), d = Math.hypot(ox, oy), m = L * 0.4;
+      if (d < m) { if (d < 1e-3) { ox = 0; oy = 1; d = 0; } const l = Math.hypot(ox, oy) || 1; dx += ox / l * (1 - d / m) * 1.8; dy += oy / l * (1 - d / m) * 1.8; }
+    }
+    // Slip off-screen now and then, but always turn back.
+    const over = Math.max(-hx, hx - W, -hy, hy - H);
+    if (over > -L * 0.25) {
+      const w = clamp((over + L * 0.25) / (L * 0.5), 0, 1) * 3.5, tx = W / 2 - hx, ty = H / 2 - hy, d = Math.hypot(tx, ty) || 1;
+      dx += tx / d * w; dy += ty / d * w;
+    }
+    const desired = Math.atan2(dy, dx);
+    const maxTurn = Math.min(fleeing ? 3 : 0.8, (k.speed / L) * 4) * dt;
+    const turned = clamp(angDiff(k.heading, desired), -maxTurn, maxTurn);
+    k.heading += turned;
+    k.turn += (turned / dt - k.turn) * Math.min(1, dt * 3);
+
+    // Burst and coast.
+    if (t > k.nextBurst && t > k.burstUntil) { k.burstUntil = t + rand(0.7, 1.6); k.nextBurst = k.burstUntil + rand(1.2, 4); }
+    const bursting = fleeing || t < k.burstUntil;
+    k.beat += ((bursting ? 1 : 0) - k.beat) * Math.min(1, dt * 3);
+    const cruise = 12 + L * 0.05;
+    const target = fleeing ? cruise * 3.2 : bursting ? cruise * 1.35 : cruise * 0.45;
+    k.speed += (target - k.speed) * Math.min(1, dt * (bursting ? 1.6 : 0.35));
+    k.phase += dt * (0.6 + k.beat * (2.2 + k.speed / 11));
+    k.finPhase += dt * 2.4;
+    if (t > k.nextDive) { k.depthTarget = rand(0.5, 1); k.nextDive = t + rand(8, 20); }
+    k.depth += (k.depthTarget - k.depth) * Math.min(1, dt * 0.15);
+    if (t > k.nextSurface && k.depth > 0.75) { addRipple(hx, hy, 0.35); k.nextSurface = t + rand(8, 20); }
+
+    nodes[0] += Math.cos(k.heading) * k.speed * dt;
+    nodes[1] += Math.sin(k.heading) * k.speed * dt;
+    const seg = L / (KOI_NODES - 1);
+    let prev = k.heading + Math.PI;
+    for (let n = 1; n < KOI_NODES; n++) {
+      const px = nodes[(n - 1) * 2], py = nodes[(n - 1) * 2 + 1];
+      let a = Math.atan2(nodes[n * 2 + 1] - py, nodes[n * 2] - px);
+      a = prev + clamp(angDiff(prev, a), -0.16, 0.16);
+      nodes[n * 2] = px + Math.cos(a) * seg; nodes[n * 2 + 1] = py + Math.sin(a) * seg;
+      prev = a;
+    }
+    // Tail wake on the water.
+    for (let n = KOI_NODES - 4; n < KOI_NODES; n++) {
+      const i = cellIndex(nodes[n * 2], nodes[n * 2 + 1]);
+      if (i >= 0) energy[i] = Math.min(1.5, energy[i] + 0.035 + k.speed * 0.0012);
+    }
+  }
+
+  const kSpine = new Float32Array(KOI_NODES * 2), kArc = new Float32Array(KOI_NODES);
+  let kArcTotal = 1, kFlareL = 1, kFlareR = 1, kS = 0, kV = 0, kDist = 0, kTx = 1, kTy = 0;
+  function koiSample(px, py, L) {
+    let best = Infinity, bS = 0, sign = 1, past = 0, ahead = 0, lateral = 0;
+    for (let n = 0; n <= KOI_NODES - 2; n++) {
+      const ax = kSpine[n * 2], ay = kSpine[n * 2 + 1], sx = kSpine[n * 2 + 2] - ax, sy = kSpine[n * 2 + 3] - ay;
+      const l2 = sx * sx + sy * sy || 1, raw = ((px - ax) * sx + (py - ay) * sy) / l2, u = clamp(raw, 0, 1);
+      const d2 = (px - ax - sx * u) ** 2 + (py - ay - sy * u) ** 2;
+      if (d2 < best) {
+        const len = Math.sqrt(l2);
+        best = d2; bS = (kArc[n] + u * len) / kArcTotal;
+        const cr = sx * (py - ay) - sy * (px - ax);
+        sign = cr >= 0 ? 1 : -1;
+        past = n === KOI_NODES - 2 ? Math.max(0, raw - 1) * len : 0;
+        ahead = n === 0 ? Math.max(0, -raw) * len : 0;
+        lateral = Math.abs(cr) / len; kTx = sx / len; kTy = sy / len;
+      }
+    }
+    const a = Math.sqrt(best);
+    kDist = a; kS = bS; kV = a * sign;
+    return koiClassify(bS, a / L, past / L, sign > 0 ? kFlareL : kFlareR, ahead / L, lateral / L);
+  }
+
+  function rasterKoi(k) {
+    const L = k.length, nodes = k.nodes, swim = 0.2 + 1.1 * k.beat;
+    for (let n = 0; n < KOI_NODES; n++) {
+      const s = n / (KOI_NODES - 1), a = Math.max(0, n - 1), b = Math.min(KOI_NODES - 1, n + 1);
+      let tx = nodes[a * 2] - nodes[b * 2], ty = nodes[a * 2 + 1] - nodes[b * 2 + 1];
+      const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+      const off = L * 0.04 * (0.05 + 0.95 * Math.pow(s, 2.2)) * swim * Math.sin(k.phase - s * 4.6);
+      kSpine[n * 2] = nodes[n * 2] - ty * off; kSpine[n * 2 + 1] = nodes[n * 2 + 1] + tx * off;
+    }
+    kArc[0] = 0;
+    for (let n = 1; n < KOI_NODES; n++) kArc[n] = kArc[n - 1] + Math.hypot(kSpine[n * 2] - kSpine[n * 2 - 2], kSpine[n * 2 + 1] - kSpine[n * 2 - 1]);
+    kArcTotal = kArc[KOI_NODES - 1] || 1;
+    const spread = 1 - 0.25 * k.beat, scull = 0.18 * (1 - k.beat) * Math.sin(k.finPhase), bank = clamp(k.turn * 0.6, -0.35, 0.35);
+    kFlareL = spread + scull - bank; kFlareR = spread - scull + bank;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let n = 0; n < KOI_NODES; n++) { minX = Math.min(minX, kSpine[n * 2]); maxX = Math.max(maxX, kSpine[n * 2]); minY = Math.min(minY, kSpine[n * 2 + 1]); maxY = Math.max(maxY, kSpine[n * 2 + 1]); }
+    const reach = L * 0.26;
+    const c0 = Math.max(0, Math.floor((minX - reach) / cw)), c1 = Math.min(cols - 1, Math.floor((maxX + reach) / cw));
+    const r0 = Math.max(0, Math.floor((minY - reach) / ch)), r1 = Math.min(rows - 1, Math.floor((maxY + reach) / ch));
+    if (c0 > c1 || r0 > r1) return;
+    const KP = P.koi, dim = KP.alpha * (KP.depthFloor + (1 - KP.depthFloor) * k.depth);
+    const sdc = Math.round(L * 0.07 * k.depth / cw) + 1, sdr = Math.round(L * 0.05 * k.depth / ch) + 1;
+    const diag = Math.hypot(cw, ch);
+
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+      const x = c * cw, y = r * ch;
+      const centerHit = koiSample(x + cw / 2, y + ch / 2, L);
+      if (!centerHit && kDist > L * 0.25 + diag) continue;
+      let flag = khit.flag, across = khit.across, s = kS, v = kV, tx = kTx, ty = kTy;
+      let hits = centerHit ? 1 : 0;
+      for (let q = 0; q < SUB.length; q += 2) {
+        if (!koiSample(x + SUB[q] * cw, y + SUB[q + 1] * ch, L)) continue;
+        if (!hits) { flag = khit.flag; across = khit.across; s = kS; v = kV; tx = kTx; ty = kTy; }
+        hits++;
+      }
+      if (!hits) continue;
+      const i = r * cols + c, cov = hits / 5, side = v >= 0 ? 1 : -1;
+      const key = (hash3(Math.round(s * 90), Math.round(v / (cw * 0.8)), k.id) * 4294967295) >>> 0;
+      let glyph = " ", rgb = KP.fin, alpha = dim, tile = null, tileA = 0;
+      if (flag === KF_BARBEL) {
+        glyph = lineGlyph(-tx - side * ty * 0.7, -ty + side * tx * 0.7); rgb = shade(mix(P.bg, KP.fin, 0.9), P.ink + 0.3);
+      } else if (flag === KF_EYE && centerHit && cov >= 0.6) {
+        tile = mix(P.bg, KP.eye, 0.85); tileA = dim; glyph = "o"; rgb = mix(P.bg, KP.white, 0.9);
+      } else if (flag === KF_FIN) {
+        tile = mix(P.bg, KP.fin, 0.55); tileA = dim * 0.45 * cov;
+        if (key % 2 === 0) { glyph = "."; alpha *= 0.6 * cov; }
+      } else {
+        const vn = v / L;
+        let skin = KP.white;
+        if (!(across > 0.9 || s > 0.74)) {
+          const wob = (vnoise(s * 14 + k.id, vn * 30, k.id + 3) - 0.5) * 0.6;
+          if (k.marks.black.some(m => inPatch(m, s, vn, wob))) skin = KP.black;
+          else if (k.marks.red.some(m => inPatch(m, s, vn, wob))) skin = KP.red;
+        }
+        const facing = side * (0.6 * ty - 0.8 * tx) * across;
+        const lum = clamp(0.22 + 0.5 * Math.sqrt(1 - across * across) + 0.18 * facing, 0, 1);
+        if (skin === KP.red) {
+          const lean = (hash3(k.id, 5, 17) - 0.5) * 0.3, grain = (vnoise(s * 9 + k.id, vn * 18, k.id + 21) - 0.5) * 0.25;
+          const sheen = Math.max(0, Math.sin(s * 11 - S.t * 1.8 + k.id) - 0.7) / 0.3;
+          tile = ramp(KP.hi, 0.15 + 0.8 * lum + lean + grain + sheen * 0.35);
+        } else tile = mix(P.bg, skin, KP.tile[0] + (KP.tile[1] - KP.tile[0]) * lum);
+        if (hits === 5) {
+          const sc = c + sdc, sr = r + sdr;
+          if (sc < cols && sr < rows) gShadow[sr * cols + sc] = 1;
+          tileA = dim;
+          glyph = KOI_GLYPHS[clamp(Math.round((1 - lum) * 4) + ((key >>> 4) % 3), 0, KOI_GLYPHS.length - 1)];
+          rgb = shade(tile, KP.ink);
+          if (skin === KP.white) alpha *= 0.6;
+          if (hash3(key, Math.floor(S.t * 1.4 + (key % 997) / 97), 7) < 0.03) tile = mix(tile, P.bg, 0.45);
+        } else {
+          tileA = dim * cov * 0.55;
+          if (key % 3 === 0) { glyph = "."; rgb = shade(tile, KP.ink); }
+        }
+      }
+      if (glyph === " " && !tileA) continue;
+      writeCell(i, KIND_KOI, glyph, rgb, alpha, tile, tileA);
+    }
+  }
+
   // ── behaviour ───────────────────────────────────────────────────────
   const freePads = f => S.pads.filter(p => !p.occ && p !== f.pad);
   const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -608,6 +875,8 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
     }
     for (const d of S.duck) { d.x = (d.x + Math.sin(S.t * 0.1 + d.ph) * 2 * dt + W) % W; d.y = (d.y + Math.cos(S.t * 0.08 + d.ph) * 1.5 * dt + H) % H; }
     stepFlies(dt);
+    for (const k of S.koi) stepKoi(k, dt);
+    S.pointer.speed *= Math.exp(-dt * 8);
     for (const f of S.frogs) stepFrog(f, dt);
     S.ripples = S.ripples.filter(r => S.t - r.born < 2.4);
     S.labels = S.labels.filter(l => S.t - l.born < 1.6);
@@ -634,6 +903,7 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
   function render(dt) {
     if (!cols) return;
     gGlyph.fill(0); gTileA.fill(0); gKind.fill(0); gShadow.fill(0);
+    for (const k of S.koi.slice().sort((a, b) => a.depth - b.depth)) rasterKoi(k);
     for (const p of S.pads) rasterPad(p);
     for (const f of S.frogs.slice().sort((a, b) => a.z - b.z)) rasterFrog(f);
     // Tongues
@@ -740,7 +1010,7 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
   // ── stats ───────────────────────────────────────────────────────────
   let lastStats = "";
   function updateStats() {
-    const s = `frogs ${S.frogs.length} · hops ${S.hops} · flies ${S.caught}`;
+    const s = `frogs ${S.frogs.length} · koi ${S.koi.length} · hops ${S.hops} · flies ${S.caught}`;
     if (s !== lastStats) { statsEl.textContent = s; lastStats = s; }
   }
 
@@ -785,7 +1055,12 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
   }
 
   function toLocal(e) { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
-  window.addEventListener("pointermove", e => { const p = toLocal(e); S.pointer.x = p.x; S.pointer.y = p.y; S.pointer.active = true; }, { passive: true });
+  let lastMove = 0;
+  window.addEventListener("pointermove", e => {
+    const p = toLocal(e), now = performance.now(), dts = Math.max(0.008, (now - lastMove) / 1000);
+    if (S.pointer.active && now - lastMove < 100) S.pointer.speed = Math.max(S.pointer.speed, Math.hypot(p.x - S.pointer.x, p.y - S.pointer.y) / dts);
+    S.pointer.x = p.x; S.pointer.y = p.y; S.pointer.active = true; lastMove = now;
+  }, { passive: true });
   document.documentElement.addEventListener("pointerleave", () => { S.pointer.active = false; });
   window.addEventListener("click", e => {
     if (e.target.closest("a, button")) return;
