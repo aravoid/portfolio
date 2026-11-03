@@ -42,6 +42,9 @@ nav a { color: var(--muted); text-decoration: none; }
 nav a[aria-current="page"] { color: var(--fg); }
 nav a[aria-current="page"]::before { content: "> "; color: var(--accent); }
 nav a:hover { color: var(--fg); }
+.theme-toggle { margin-left: auto; font: inherit; color: var(--muted); background: none; border: 0; padding: 0; cursor: pointer; }
+.theme-toggle:hover { color: var(--fg); }
+.theme-toggle:focus-visible { outline: 1px dashed var(--accent); outline-offset: 3px; }
 a:focus-visible { outline: 1px dashed var(--accent); outline-offset: 3px; }
 
 blockquote {
@@ -77,6 +80,7 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
         <a href="#" data-view="pond" aria-current="page">pond</a>
         <a href="#projects" data-view="projects">projects</a>
         <a href="#blog" data-view="blog">blog</a>
+        <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Switch to dark mode">[ dark ]</button>
       </nav>
       <section class="bio view" data-view="pond">
         <h1>Hi, I'm Aravind.</h1>
@@ -1084,6 +1088,24 @@ h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(2.2rem, 7vw, 
     document.title = v === "pond" ? "Aravind" : v[0].toUpperCase() + v.slice(1) + " · Aravind";
     if (cols) { S.avoid = contentBox(); computeDim(); if (reduce.matches) drawStill(); }
   }
+  // ── light / dark toggle: remembers the choice, otherwise follows the system ──
+  const toggle = document.getElementById("theme-toggle");
+  function syncToggle() {
+    const dark = isDark();
+    toggle.textContent = dark ? "[ light ]" : "[ dark ]";
+    toggle.setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
+  }
+  try { const saved = localStorage.getItem("pond-theme"); if (saved === "light" || saved === "dark") document.documentElement.setAttribute("data-theme", saved); } catch (e) {}
+  toggle.addEventListener("click", e => {
+    e.stopPropagation();
+    const next = isDark() ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("pond-theme", next); } catch (e) {}
+    syncToggle();
+  });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", syncToggle);
+  syncToggle();
+
   window.addEventListener("hashchange", route);
   route();
 
